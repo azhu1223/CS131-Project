@@ -14,11 +14,11 @@ class ClassMethod:
     # Pass in the list without the "method" part
     def __init__(self, declaration_list):
         self.name = declaration_list[0]
-        self.arguments = declaration_list[1]
+        self.parameters = declaration_list[1]
         self.body = declaration_list[2]
 
     def print(self):
-        print(f"Method {self.name}'s arguments are {self.arguments} and body is {self.body}")
+        print(f"Method {self.name}'s parameters are {self.parameters} and body is {self.body}")
 
 class ClassDefinition:
     def __init__(self, name, declaration_list):
@@ -32,7 +32,7 @@ class ClassDefinition:
             elif (declaration[0] == InterpreterBase.METHOD_DEF):
                 self.methods[declaration[1]] = ClassMethod(declaration[1:])
             else:
-                # error
+                # TODO: Error
                 None
 
     def print(self):
@@ -41,6 +41,53 @@ class ClassDefinition:
             field.print()
         for _, method in self.methods.items():
             method.print()
+
+class ClassInstance:
+    def __init__(self, interpreter, name, class_type):
+        self.interpreter = interpreter
+        self.name = name
+        self.class_type = class_type
+        self.fields = {}
+        self.methods = {}
+
+        for key, value in self.class_type.fields.items():
+            self.fields[key] = value.value
+
+        for key, value in self.class_type.methods.items():
+            self.methods[key] = (value.parameters, value.body)
+
+    def run_method(self, method, arguments=[]):
+        method_body = self.methods[method][1]
+        method_parameters = self.methods[method][0]
+
+        if len(method_parameters) != len(arguments):
+            # TODO: Error
+            None
+
+        argument_binding = {}
+        
+        for i in range(0, len(arguments)):
+            argument_binding[method_parameters[i]] = arguments[i]
+
+        if method_body[0] == InterpreterBase.PRINT_DEF:
+            value_to_be_printed = None
+            argument = method_body[1]
+
+            if (argument[0] == '"' and argument[-1] == '"') or argument == InterpreterBase.TRUE_DEF or argument == InterpreterBase.FALSE_DEF or ClassInstance.__is_number(argument):
+                value_to_be_printed = argument
+            else:
+                if argument in argument_binding.keys():
+                    value_to_be_printed = argument_binding[argument]
+                else:
+                    value_to_be_printed = self.fields[argument]
+            self.interpreter.output(value_to_be_printed)
+    
+    def __is_number(s):
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
     
 class Interpreter(InterpreterBase):
     def __init__(self, console_output=True, inp=None, trace_output=False):
@@ -65,8 +112,11 @@ class Interpreter(InterpreterBase):
         for _, c in self.classes.items():
             c.print()
 
+        obj = ClassInstance(self, "main", self.classes["main"])
+        obj.run_method("main")
+
 def main():
-    program_source = ['(class main (method main () (print "hello world!")))']
+    program_source = ['(class main (field hello_world "hello world!") (method main () (print hello_world)))']
     
     interpreter = Interpreter()
 
