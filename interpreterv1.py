@@ -23,7 +23,7 @@ class Type(Enum):
                     try:
                         float(s)
                         type = Type.NUMBER
-                    except ValueError:
+                    except:
                         pass
 
         return type
@@ -105,6 +105,10 @@ class ClassInstance:
         for i in range(0, len(arguments)):
             argument_binding[method_parameters[i]] = arguments[i]
 
+        self.__execute_statement(method_body, argument_binding)
+
+        
+    def __execute_statement(self, method_body, argument_binding):
         if method_body[0] == InterpreterBase.PRINT_DEF:
             value_to_be_printed = None
             argument = method_body[1]
@@ -129,7 +133,22 @@ class ClassInstance:
             environment["me"] = self
 
             self.interpreter.call_function(obj, method_name, argument_bindings, environment)
-    
+        
+        elif method_body[0] == InterpreterBase.SET_DEF:
+            variable_name = method_body[1]
+            value = Value(Type.type(method_body[2]), method_body[2])
+
+            if variable_name in argument_binding.keys():
+                argument_binding[variable_name] = value
+            else:
+                self.fields[variable_name] = value
+
+        elif method_body[0] == InterpreterBase.NEW_DEF:
+            class_name = method_body[1]
+            class_type = self.interpreter.classes[class_name]
+
+            return ClassInstance(self.interpreter, class_type.name, class_type)
+
 class Interpreter(InterpreterBase):
     def __init__(self, console_output=True, inp=None, trace_output=False):
         super().__init__(console_output, inp)
