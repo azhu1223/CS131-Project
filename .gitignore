@@ -130,3 +130,5 @@ dmypy.json
 
 # mac stuff *shakes fist*
 .DS_Store
+
+test.py

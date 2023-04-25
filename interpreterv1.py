@@ -1,14 +1,50 @@
 from bparser import BParser
 from intbase import InterpreterBase
+from enum import Enum
+
+class Type(Enum):
+    NUMBER = 1
+    BOOLEAN = 2
+    STRING = 3
+    NULL = 4
+
+    def type(s):
+        type = None
+
+        if (s == InterpreterBase.NULL_DEF):
+            type = Type.NULL
+        else:
+            if (s == InterpreterBase.TRUE_DEF or s == InterpreterBase.FALSE_DEF):
+                type = Type.BOOLEAN
+            else:
+                if (s[0] == '"' and s[-1] == '"'):
+                    type = Type.STRING
+                else:
+                    try:
+                        float(s)
+                        type = Type.NUMBER
+                    except ValueError:
+                        pass
+
+        return type
+
+class Value:
+    def __init__(self, type, value):
+        self.type = type
+        self.value = value
 
 class ClassField:
     # Pass in the list without the "field" part
     def __init__(self, declaration_list):
         self.name = declaration_list[0]
-        self.value = declaration_list[1]
+
+        value = declaration_list[1]
+        type = Type.type(value)
+
+        self.value = Value(type, value)
 
     def print(self):
-        print(f"Field {self.name} equals {self.value}")
+        print(f"Field {self.name} equals {self.value.value} of type {self.value.type}")
 
 class ClassMethod:
     # Pass in the list without the "method" part
@@ -72,22 +108,27 @@ class ClassInstance:
         if method_body[0] == InterpreterBase.PRINT_DEF:
             value_to_be_printed = None
             argument = method_body[1]
+            argument_type = Type.type(argument)
 
-            if (argument[0] == '"' and argument[-1] == '"') or argument == InterpreterBase.TRUE_DEF or argument == InterpreterBase.FALSE_DEF or ClassInstance.__is_number(argument):
+            if argument_type is not None:
                 value_to_be_printed = argument
+            elif argument == InterpreterBase.CALL_DEF:
+                None
             else:
                 if argument in argument_binding.keys():
-                    value_to_be_printed = argument_binding[argument]
+                    value_to_be_printed = argument_binding[argument].value
                 else:
-                    value_to_be_printed = self.fields[argument]
+                    value_to_be_printed = self.fields[argument].value
             self.interpreter.output(value_to_be_printed)
-    
-    def __is_number(s):
-        try:
-            float(s)
-            return True
-        except ValueError:
-            return False
+
+        elif method_body[0] == InterpreterBase.CALL_DEF:
+            obj = method_body[1]
+            method_name = method_body[2]
+            argument_bindings = method_body[3:]
+            environment = self.fields | argument_binding
+            environment["me"] = self
+
+            self.interpreter.call_function(obj, method_name, argument_bindings, environment)
     
 class Interpreter(InterpreterBase):
     def __init__(self, console_output=True, inp=None, trace_output=False):
@@ -115,12 +156,28 @@ class Interpreter(InterpreterBase):
         obj = ClassInstance(self, "main", self.classes["main"])
         obj.run_method("main")
 
-def main():
-    program_source = ['(class main (field hello_world "hello world!") (method main () (print hello_world)))']
+    # Before calling this function, must merge fields and other environment variables into a single dictionary. Must add a "me" key with the class type.
+    def call_function(self, obj, method_name, arguments, environment):
+        object = environment[obj]
+
+        resolved_arguments = []
+        for argument in arguments:
+            argument_type = Type.type(argument)
+
+            if argument_type is not None:
+                resolved_arguments.append(argument)
+            else:
+                resolved_arguments.append(environment[argument])
+
+        object.run_method(method_name, resolved_arguments)
+
+
+# def main():
+#     program_source = ['(class main (field hello_world "hello world!") (method main () (print hello_world)))']
     
-    interpreter = Interpreter()
+#     interpreter = Interpreter()
 
-    interpreter.run(program_source)
+#     interpreter.run(program_source)
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
