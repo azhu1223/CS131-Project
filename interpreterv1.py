@@ -1,6 +1,6 @@
 from bparser import BParser
 from intbase import InterpreterBase
-from classes import *
+from classes import ClassDefinition, ClassInstance, Type
 
 class Interpreter(InterpreterBase):
     def __init__(self, console_output=True, inp=None, trace_output=False):
@@ -28,7 +28,7 @@ class Interpreter(InterpreterBase):
         obj = ClassInstance(self, "main", self.classes["main"])
         obj.run_method("main")
 
-    # Before calling this function, must merge fields and other environment variables into a single dictionary. Must add a "me" key with the class type.
+    # Before calling this function, must merge fields and other environment variables into a single dictionary. Must add a "me" key mapped to "self".
     def call_function(self, obj, method_name, arguments, environment):
         object = environment[obj]
 
@@ -42,14 +42,3 @@ class Interpreter(InterpreterBase):
                 resolved_arguments.append(environment[argument])
 
         object.run_method(method_name, resolved_arguments)
-
-
-# def main():
-#     program_source = ['(class main (field hello_world "hello world!") (method main () (print hello_world)))']
-    
-#     interpreter = Interpreter()
-
-#     interpreter.run(program_source)
-
-# if __name__ == "__main__":
-#     main()
