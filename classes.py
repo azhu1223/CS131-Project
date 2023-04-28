@@ -1,34 +1,36 @@
-from intbase import InterpreterBase
+from intbase import InterpreterBase, ErrorType
 from enum import Enum
+from inspect import isclass
 
 class Type(Enum):
     NUMBER = 1
     BOOLEAN = 2
     STRING = 3
     NULL = 4
+    OBJECT = 5
 
     def type(s):
         type = None
 
-        if (s == InterpreterBase.NULL_DEF):
+        if s == InterpreterBase.NULL_DEF:
             type = Type.NULL
+        elif isclass(s):
+            type = Type.OBJECT
+        elif s == InterpreterBase.TRUE_DEF or s == InterpreterBase.FALSE_DEF:
+            type = Type.BOOLEAN
+        elif s[0] == '"' and s[-1] == '"':
+            type = Type.STRING
         else:
-            if (s == InterpreterBase.TRUE_DEF or s == InterpreterBase.FALSE_DEF):
-                type = Type.BOOLEAN
-            else:
-                if (s[0] == '"' and s[-1] == '"'):
-                    type = Type.STRING
-                else:
-                    try:
-                        float(s)
-                        type = Type.NUMBER
-                    except:
-                        pass
+            try:
+                float(s)
+                type = Type.NUMBER
+            except:
+                pass
 
         return type
 
 class Value:
-    def __init__(self, type, value):
+    def __init__(self, type : Type, value):
         self.type = type
         self.value = value
 
@@ -56,15 +58,20 @@ class ClassMethod:
         print(f"Method {self.name}'s parameters are {self.parameters} and body is {self.body}")
 
 class ClassDefinition:
-    def __init__(self, name, declaration_list):
+    def __init__(self, name, declaration_list, interpreter):
         self.name = name
+        self.interpreter = interpreter
         self.fields = {}
         self.methods = {}
 
         for declaration in declaration_list:
             if (declaration[0] == InterpreterBase.FIELD_DEF):
+                if declaration[1] in self.fields.keys():
+                    self.interpreter.error(ErrorType.NAME_ERROR)
                 self.fields[declaration[1]] = ClassField(declaration[1:])
             elif (declaration[0] == InterpreterBase.METHOD_DEF):
+                if declaration[1] in self.methods.keys():
+                    self.interpreter.error(ErrorType.NAME_ERROR)
                 self.methods[declaration[1]] = ClassMethod(declaration[1:])
             else:
                 # TODO: Error
@@ -92,19 +99,21 @@ class ClassInstance:
             self.methods[key] = (value.parameters, value.body)
 
     def run_method(self, method, arguments=[]):
+        if method not in self.methods.keys():
+            self.interpreter.error(ErrorType.NAME_ERROR)
+
         method_body = self.methods[method][1]
         method_parameters = self.methods[method][0]
 
         if len(method_parameters) != len(arguments):
-            # TODO: Error
-            None
+            self.interpreter.error(ErrorType.TYPE_ERROR)
 
         argument_binding = {}
         
         for i in range(0, len(arguments)):
             argument_binding[method_parameters[i]] = arguments[i]
 
-        self.__execute_statement(method_body, argument_binding)
+        return self.__execute_statement(method_body, argument_binding)
 
         
     def __execute_statement(self, method_body, argument_binding):
@@ -120,10 +129,18 @@ class ClassInstance:
             variable_name = method_body[1]
             value = self.__execute_expression(method_body[2], argument_binding)
 
-            self.fields[variable_name] = value
+            if variable_name in argument_binding.keys():
+                argument_binding[variable_name] = value
+            elif variable_name in self.fields.keys():
+                self.fields[variable_name] = value
+            else:
+                self.interpreter.error(ErrorType.NAME_ERROR)
 
         elif method_body[0] == InterpreterBase.BEGIN_DEF:
-            self.__handle_begin_statement(method_body[1:], argument_binding)
+            for line in method_body[1:]:
+                return_value = self.__execute_statement(line, argument_binding)
+                if return_value is not None:
+                    return return_value
 
         elif method_body[0] == InterpreterBase.IF_DEF:
             expression = method_body[1]
@@ -133,20 +150,58 @@ class ClassInstance:
             expression_value = self.__execute_expression(expression, argument_binding)
 
             if expression_value.type != Type.BOOLEAN:
-                # TODO: Exception
-                pass
-            elif expression_value.value == "true":
-                self.__execute_statement(true_statement, argument_binding)
+                self.interpreter.error(ErrorType.TYPE_ERROR)
+            elif expression_value.value == InterpreterBase.TRUE_DEF:
+                return self.__execute_statement(true_statement, argument_binding)
             elif false_statement is not None:
-                self.__execute_statement(false_statement, argument_binding)
+                return self.__execute_statement(false_statement, argument_binding)
+
+        elif method_body[0] == InterpreterBase.WHILE_DEF:
+            expression = method_body[1]
+            statement = method_body[2]
+            return_value = None
+
+            expression_value = self.__execute_expression(expression, argument_binding)
+            if expression_value.type != Type.BOOLEAN:
+                self.interpreter.error(ErrorType.TYPE_ERROR)
+
+            while expression_value.value == InterpreterBase.TRUE_DEF:
+                return_value = self.__execute_statement(statement, argument_binding)
+                
+                expression_value = self.__execute_expression(expression, argument_binding)
+                if expression_value.type != Type.BOOLEAN:
+                    self.interpreter.error(ErrorType.TYPE_ERROR)
+
+            return return_value
+
+        elif method_body[0] == InterpreterBase.INPUT_INT_DEF:
+            variable_name = method_body[1]
+            integer_value = self.interpreter.get_input()
+            value = Value(Type.NUMBER, integer_value)
+
+            if variable_name in argument_binding.keys():
+                argument_binding[variable_name] = value
+            else:
+                self.fields[variable_name] = value
+
+        elif method_body[0] == InterpreterBase.INPUT_STRING_DEF:
+            variable_name = method_body[1]
+            string_value = self.interpreter.get_input()
+            value = Value(Type.STRING, '"' + string_value + '"')
+
+            if variable_name in argument_binding.keys():
+                argument_binding[variable_name] = value
+            else:
+                self.fields[variable_name] = value
+
+        elif method_body[0] == InterpreterBase.RETURN_DEF:
+            expression = method_body[1]
+            expression_value = self.__execute_expression(expression, argument_binding)
+
+            return expression_value
 
         else:
             self.__execute_expression(method_body, argument_binding)
-
-    
-    def __handle_begin_statement(self, begin_body, argument_binding):
-        for line in begin_body:
-            self.__execute_statement(line, argument_binding)
 
     # Call on one expression at a time
     def __execute_expression(self, expression, argument_binding):
@@ -158,61 +213,58 @@ class ClassInstance:
         elif isinstance(expression, str):
             if expression in argument_binding.keys():
                 return argument_binding[expression]
-            else:
+            elif expression in self.fields.keys():
                 return self.fields[expression]
+            else:
+                self.interpreter.error(ErrorType.NAME_ERROR)
 
         elif expression[0] == '+':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
-                return Value(Type.NUMBER, int(left_value.value) + int(right_value.value))
+                return Value(Type.NUMBER, str(int(left_value.value) + int(right_value.value)))
 
             elif ClassInstance.__check_both_string(left_value, right_value):
-                return Value(Type.STRING, int(left_value.value) + int(right_value.value))
+                return Value(Type.STRING, str(left_value.value + right_value.value))
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '-':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
-                return Value(Type.NUMBER, int(left_value.value) - int(right_value.value))
+                return Value(Type.NUMBER, str(int(left_value.value) - int(right_value.value)))
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '*':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
-                return Value(Type.NUMBER, int(left_value.value) * int(right_value.value))
+                return Value(Type.NUMBER, str(int(left_value.value) * int(right_value.value)))
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '/':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
-                return Value(Type.NUMBER, int(left_value.value) // int(right_value.value))
+                return Value(Type.NUMBER, str(int(left_value.value) // int(right_value.value)))
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '%':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
-                return Value(Type.NUMBER, int(left_value.value) % int(right_value.value))
+                return Value(Type.NUMBER, str(int(left_value.value) % int(right_value.value)))
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '==':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
@@ -220,12 +272,11 @@ class ClassInstance:
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(Type.BOOLEAN, str(int(left_value.value) == int(right_value.value)).lower())
 
-            elif ClassInstance.__check_both_string(left_value, right_value) or ClassInstance.__check_both_bool(left_value, right_value) or ClassInstance.__check_both_null(left_value, right_value):
+            elif ClassInstance.__check_both_string(left_value, right_value) or ClassInstance.__check_both_bool(left_value, right_value) or ClassInstance.__check_second_null(left_value, right_value):
                 return Value(Type.BOOLEAN, str(left_value.value == right_value.value).lower())
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '!=':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
@@ -233,16 +284,17 @@ class ClassInstance:
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(Type.BOOLEAN, str(int(left_value.value) != int(right_value.value)).lower())
 
-            elif ClassInstance.__check_both_string(left_value, right_value) or ClassInstance.__check_both_bool(left_value, right_value) or ClassInstance.__check_both_null(left_value, right_value):
+            elif ClassInstance.__check_both_string(left_value, right_value) or ClassInstance.__check_both_bool(left_value, right_value) or ClassInstance.__check_second_null(left_value, right_value):
                 return Value(Type.BOOLEAN, str(left_value.value != right_value.value).lower())
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '!':
             value = self.__execute_expression(expression[1], argument_binding)
-            return Value(Type.BOOLEAN, str(value.value == "false").lower())
+            if value.type != Type.BOOLEAN:
+                self.interpreter.error(ErrorType.TYPE_ERROR)
+            return Value(Type.BOOLEAN, str(value.value == InterpreterBase.FALSE_DEF).lower())
 
         elif expression[0] == '>':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
@@ -254,8 +306,7 @@ class ClassInstance:
                 return Value(Type.BOOLEAN, str(left_value.value > right_value.value).lower())
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '>=':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
@@ -267,8 +318,7 @@ class ClassInstance:
                 return Value(Type.BOOLEAN, str(left_value.value >= right_value.value).lower())
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '<':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
@@ -280,8 +330,7 @@ class ClassInstance:
                 return Value(Type.BOOLEAN, str(left_value.value < right_value.value).lower())
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '<=':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
@@ -293,43 +342,51 @@ class ClassInstance:
                 return Value(Type.BOOLEAN, str(left_value.value <= right_value.value).lower())
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '&':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
 
             if ClassInstance.__check_both_bool(left_value, right_value):
-                return Value(Type.BOOLEAN, str(left_value.value == "true" and right_value.value == "true").lower())
+                return Value(Type.BOOLEAN, str(left_value.value == InterpreterBase.TRUE_DEF and right_value.value == InterpreterBase.TRUE_DEF).lower())
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '|':
             left_value, right_value = self.__parse_binary_arguments(expression, argument_binding)
 
             if ClassInstance.__check_both_bool(left_value, right_value):
-                return Value(Type.BOOLEAN, str(left_value.value == "true" or right_value.value == "true").lower())
+                return Value(Type.BOOLEAN, str(left_value.value == InterpreterBase.TRUE_DEF or right_value.value == InterpreterBase.TRUE_DEF).lower())
 
             else:
-                # TODO: Exception
-                pass
+                self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == InterpreterBase.NEW_DEF:
             class_name = expression[1]
+
+            if class_name not in self.interpreter.classes.keys():
+                self.interpreter.error(ErrorType.TYPE_ERROR)
+
             class_type = self.interpreter.classes[class_name]
 
-            return ClassInstance(self.interpreter, class_type.name, class_type)
+            return Value(Type.OBJECT, ClassInstance(self.interpreter, class_type.name, class_type))
 
         elif expression[0] == InterpreterBase.CALL_DEF:
-            obj = expression[1]
             method_name = expression[2]
-            argument_bindings = expression[3:]
             environment = self.fields | argument_binding
-            environment[InterpreterBase.ME_DEF] = self
+            environment[InterpreterBase.ME_DEF] = Value(Type.OBJECT, self)
 
-            return_value = self.interpreter.call_function(obj, method_name, argument_bindings, environment)
+            obj = self.__execute_expression(expression[1], environment)
+
+            if obj.type == Type.NULL:
+                self.interpreter.error(ErrorType.FAULT_ERROR)
+
+            arguments_passed = []
+            for argument in expression[3:]:
+                arguments_passed.append(self.__execute_expression(argument, argument_binding))
+
+            return_value = self.interpreter.call_function(obj, method_name, arguments_passed)
 
             if return_value is not None:
                 return return_value
@@ -349,5 +406,5 @@ class ClassInstance:
     def __check_both_bool(left_value, right_value):
         return left_value.type == Type.BOOLEAN and right_value.type == Type.BOOLEAN
 
-    def __check_both_null(left_value, right_value):
-        return left_value.type == Type.NULL and right_value.type == Type.NULL
+    def __check_second_null(left_value, right_value):
+        return (left_value.type == Type.NULL or left_value.type == Type.OBJECT) and right_value.type == Type.NULL
