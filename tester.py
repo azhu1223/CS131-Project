@@ -120,16 +120,78 @@ def __generate_test_suite(version, successes, failures):
 
 def generate_test_suite_v1():
     """wrapper for generate_test_suite for v1"""
-    return __generate_test_suite(
-        1,
-        ["test_inputi", "test_recursion1", "test_set_field", "test_create_object", "test_mutual_recursion"],
-        ["test_if", "test_incompat_operands1"],
-    )
+    tests = [
+        "test_begin1",
+        "test_begin2",
+        "test_bool_expr",
+        "test_compare_bool",
+        "test_compare_int",
+        "test_compare_null",
+        "test_compare_string",
+        "test_fields",
+        "test_function_call_same_class",
+        "test_fwd_call",
+        "test_if",
+        "test_inputi",
+        "test_inputs",
+        "test_instantiate_and_call1",
+        "test_instantiate_and_call2",
+        "test_instantiate_and_return1",
+        "test_instantiate_and_return2",
+        "test_int_ops",
+        "test_nested_calls",
+        "test_nothing",
+        "test_pass_by_value",
+        "test_print_bool",
+        "test_print_combo",
+        "test_print_int",
+        "test_print_string",
+        "test_recursion1",
+        "test_recursion2",
+        "test_return",
+        "test_return_exit",
+        "test_return_type",
+        "test_set_field",
+        "test_set_param",
+        "test_str_ops",
+        "test_while",
+        "test_create_object", 
+        "test_mutual_recursion",
+    ]
+    fails = [
+        "test_call_badargs",
+        "test_call_invalid_func",
+        "test_dup_class",
+        "test_dup_field",
+        "test_dup_method",
+        "test_eval_invalid_var",
+        "test_if",
+        "test_incompat_operands1",
+        "test_incompat_operands2",
+        "test_incompat_operands3",
+        "test_incompat_operands4",
+        "test_instantiate_invalid",
+        "test_null_objref",
+        "test_return_nothing",
+        "test_set_invalid_var",
+        "test_while",
+    ]
+    return __generate_test_suite(1, tests, fails)
 
 
 def generate_test_suite_v2():
     """wrapper for generate_test_suite for v2"""
-    return __generate_test_suite(2, [], [])
+    return __generate_test_suite(
+        2,
+        [
+            "test_compare_null",
+            "test_return_default1",
+            "test_inher2",
+            "test_inher1",
+            "test_let",
+        ],
+        ["test_incompat_return1", "test_let2", "test_inher1", "test_incompat_types2"],
+    )
 
 
 def generate_test_suite_v3():
