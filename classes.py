@@ -195,8 +195,11 @@ class ClassInstance:
                 self.fields[variable_name] = value
 
         elif method_body[0] == InterpreterBase.RETURN_DEF:
-            expression = method_body[1]
-            expression_value = self.__execute_expression(expression, argument_binding)
+            expression_value = None
+            
+            if len(method_body) != 1:
+                expression = method_body[1]
+                expression_value = self.__execute_expression(expression, argument_binding)
 
             return expression_value
 

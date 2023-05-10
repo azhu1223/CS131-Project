@@ -122,7 +122,7 @@ def generate_test_suite_v1():
     """wrapper for generate_test_suite for v1"""
     return __generate_test_suite(
         1,
-        ["test_inputi", "test_recursion1", "test_set_field"],
+        ["test_inputi", "test_recursion1", "test_set_field", "test_create_object", "test_mutual_recursion"],
         ["test_if", "test_incompat_operands1"],
     )
 

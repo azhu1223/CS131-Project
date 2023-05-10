@@ -1,6 +1,6 @@
 from bparser import BParser
 from intbase import InterpreterBase, ErrorType
-from classes import ClassDefinition, ClassInstance, Type, Value
+from classes import ClassDefinition, ClassInstance
 
 class Interpreter(InterpreterBase):
     def __init__(self, console_output=True, inp=None, trace_output=False):
@@ -17,9 +17,8 @@ class Interpreter(InterpreterBase):
     
     def run(self, program):
         result, parsed_program = BParser.parse(program)
-        if result == True:
-            print(parsed_program)
-        else:
+
+        if not result:
             print("Parsing failed. There must have been a mismatched parenthesis.")
 
         self.__discover_all_classes_and_track_them(parsed_program)
