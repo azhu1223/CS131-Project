@@ -1,6 +1,6 @@
 from bparser import BParser
 from intbase import InterpreterBase, ErrorType
-from classesv1 import ClassDefinition, ClassInstance
+from classesv2 import ClassDefinition, ClassInstance, Value
 
 class Interpreter(InterpreterBase):
     def __init__(self, console_output=True, inp=None, trace_output=False):
@@ -26,9 +26,22 @@ class Interpreter(InterpreterBase):
         # for _, c in self.classes.items():
         #     c.print()
 
-        obj = ClassInstance(self, "main", self.classes["main"])
-        obj.run_method("main")
+        obj = ClassInstance(self, InterpreterBase.MAIN_CLASS_DEF, self.classes[InterpreterBase.MAIN_CLASS_DEF])
+
+        environment_stack = []
+
+        main_object = Value(obj)
+
+        self.call_function(environment_stack, main_object, InterpreterBase.MAIN_FUNC_DEF, [])
 
     # Before calling this function, must merge fields and other environment variables into a single dictionary. Must add a "me" key mapped to "self".
-    def call_function(self, object, method_name, arguments_passed):
-        return object.value.run_method(method_name, arguments_passed)
+    def call_function(self, environment_stack, object, method_name, arguments_passed):
+        obj = object.value
+
+        environment_stack.append(obj.fields)
+        
+        return_value = obj.run_method(environment_stack, method_name, arguments_passed)
+        
+        environment_stack.pop()
+
+        return return_value
