@@ -194,7 +194,19 @@ def generate_test_suite_v2():
 
 def generate_test_suite_v3():
     """wrapper for generate_test_suite for v3"""
-    return __generate_test_suite(3, [], [])
+    tests = [
+        "test_str_ops",
+        "test_template1",
+        "test_template8",
+        "test_except1",
+        "test_except13"
+    ]
+    fails = [
+        "test_except4",
+        "test_template5",
+        "test_incompat_template_types"
+    ]
+    return __generate_test_suite(3, tests, fails)
 
 
 async def main():
