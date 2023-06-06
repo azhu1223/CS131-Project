@@ -1,3 +1,4 @@
+from functools import reduce
 from intbase import InterpreterBase, ErrorType
 from enum import Enum
 from inspect import isclass
@@ -10,6 +11,7 @@ class Type(Enum):
     NULL = 4
     RETURN_NULL = 5
     NOT_A_VARIABLE = 6
+    EXCEPTION = 7
 
     def type(s):
         type = None
@@ -34,23 +36,27 @@ class Type(Enum):
     def string_to_type(s):
         type = s
 
-        if s == "int":
+        if s == InterpreterBase.INT_DEF:
             type = Type.NUMBER
-        elif s == "bool":
+        elif s == InterpreterBase.BOOL_DEF:
             type = Type.BOOLEAN
-        elif s == "string":
+        elif s == InterpreterBase.STRING_DEF:
             type = Type.STRING
         elif s == InterpreterBase.NULL_DEF:
             type = Type.NULL
-        elif s == "void":
+        elif s == InterpreterBase.VOID_DEF:
             type = Type.RETURN_NULL
+        elif s == InterpreterBase.EXCEPTION_VARIABLE_DEF:
+            type = Type.EXCEPTION
 
         return type
 
 class Value:
-    def __init__(self, value, returned_nothing=False, null_type=None):
+    def __init__(self, value, returned_nothing=False, null_type=None, exception=False):
         if returned_nothing:
             self.type = Type.RETURN_NULL
+        elif exception:
+            self.type = Type.EXCEPTION
         else: 
             self.type = Type.type(value)
             if self.type == Type.NULL:
@@ -62,6 +68,10 @@ class Variable:
         self.type = Type.string_to_type(type)
         self.name = name
         self.interpreter = interpreter
+
+        if type not in self.interpreter.types:
+            self.interpreter.create_parameterized_class(type)
+
         self.assign(value)
     
     def assign(self, value : Value):
@@ -89,7 +99,17 @@ class ClassField:
         self.interpreter = interpreter
         self.name = declaration_list[1]
         self.type = declaration_list[0]
-        self.value = Value(declaration_list[2])
+
+        value = None
+
+        if len(declaration_list) == 3:
+            value = declaration_list[2]
+
+        if value is not None:
+            self.value = Value(value)
+
+        else:
+            self.value = ClassInstance.get_default_return_value(Type.string_to_type(self.type))
 
     def print(self):
         print(f"Field {self.name} equals {self.value.value} of type {self.type}")
@@ -118,6 +138,48 @@ class ClassMethod:
 
     def print(self):
         print(f"Method {self.name}'s parameters are {self.parameters}, body is {self.body}, and type is {self.type}")
+
+class TemplateClassDefinition:
+    def __init__(self, name, type_parameters, declaration_list, interpreter):
+        self.name = name
+        self.type_parameters = type_parameters
+        self.declaration_list = declaration_list
+        self.interpreter = interpreter
+
+    #Type should be a list of the type arguments in order
+    def create_class(self, type_arguments):
+        if len(type_arguments) != len(self.type_parameters):
+            self.interpreter.error(ErrorType.TYPE_ERROR)
+
+        type_binding_dictionary = {x : y for (x, y) in zip(self.type_parameters, type_arguments)}
+
+        filled_in_declaration_list = TemplateClassDefinition.__recurse_replace(self.declaration_list, type_binding_dictionary)
+
+        new_class_name = self.name + InterpreterBase.TYPE_CONCAT_CHAR + reduce(lambda a, b : a + InterpreterBase.TYPE_CONCAT_CHAR + b, type_arguments)
+
+        return ClassDefinition(new_class_name, filled_in_declaration_list, self.interpreter)
+
+    def __recurse_replace(declaration_list, type_binding_dictionary):
+        replaced_list = []
+
+        for element in declaration_list:
+            replace_element = element
+
+            if isinstance(element, list):
+                replace_element = TemplateClassDefinition.__recurse_replace(element, type_binding_dictionary)
+            elif element in type_binding_dictionary.keys():
+                replace_element = type_binding_dictionary[element]
+            elif InterpreterBase.TYPE_CONCAT_CHAR in element:
+                delimited_element = element.split(InterpreterBase.TYPE_CONCAT_CHAR)
+                for i in range(len(delimited_element[1:])):
+                    delimited_element[i + 1] = type_binding_dictionary[delimited_element[i + 1]]
+
+                replace_element = reduce(lambda a, b : a + InterpreterBase.TYPE_CONCAT_CHAR + b, delimited_element)
+
+
+            replaced_list.append(replace_element)
+
+        return replaced_list
 
 class ClassDefinition:
     def __init__(self, name, declaration_list, interpreter, parent_class=None):
@@ -218,16 +280,16 @@ class ClassInstance:
         environment_stack.pop()
 
         if (method_type != Type.RETURN_NULL and (return_value is None or return_value.type == Type.RETURN_NULL)):
-            return_value = ClassInstance.__get_default_return_value(method_type)
+            return_value = ClassInstance.get_default_return_value(method_type)
 
-        if (return_value is not None and 
+        if (return_value is not None and return_value.type is not Type.EXCEPTION and 
             (
                 (
                     (method_type != return_value.type) and not 
-                    (return_value.type == Type.NULL and method_type in self.interpreter.classes.keys()) and not
+                    (return_value.type == Type.NULL and method_type in self.interpreter.types) and not
                     (isinstance(return_value.type, str) and return_value.value.is_instance(method_type))
                 ) or 
-                return_value.type == Type.NULL and method_type in self.interpreter.classes.keys() and return_value.null_type not in self.interpreter.classes[method_type].valid_types
+                return_value.type == Type.NULL and method_type in self.interpreter.types and return_value.null_type not in self.interpreter.classes[method_type].valid_types
             )
             ):
             self.interpreter.error(ErrorType.TYPE_ERROR)
@@ -249,7 +311,7 @@ class ClassInstance:
         
         return return_value
 
-    def __get_default_return_value(method_type):
+    def get_default_return_value(method_type):
         if method_type == Type.NUMBER:
             return Value("0")
         elif method_type == Type.BOOLEAN:
@@ -261,12 +323,17 @@ class ClassInstance:
         else:
             return Value(InterpreterBase.NULL_DEF)
         
-    def __execute_statement(self, method_body, environment_stack, method_type=Type.RETURN_NULL):
+    def __execute_statement(self, method_body, environment_stack, method_type=Type.RETURN_NULL, exception_accessible=False):
         if method_body[0] == InterpreterBase.PRINT_DEF:
             value_to_be_printed = ""
 
             for expression in method_body[1:]:
-                value_to_be_printed += self.__execute_expression(expression, environment_stack)[0].value.replace('"', "")
+                evaluated_expression = self.__execute_expression(expression, environment_stack, exception_accessible=exception_accessible)[0]
+
+                if evaluated_expression.type == Type.EXCEPTION:
+                    return evaluated_expression
+                else:
+                    value_to_be_printed += evaluated_expression.value.replace('"', "")
             
             self.interpreter.output(value_to_be_printed)
         
@@ -275,14 +342,17 @@ class ClassInstance:
 
             expression = method_body[2]
 
-            variable = self.__get_variable_from_environment(environment_stack, variable_name)
+            variable = self.__get_variable_from_environment(environment_stack, variable_name, exception_accessible=exception_accessible)
 
             value = None
 
             if expression == InterpreterBase.ME_DEF:
                 value = Value(self.me[0])
             else:
-                value, _ = self.__execute_expression(expression, environment_stack, variable.type)
+                value, _ = self.__execute_expression(expression, environment_stack, variable.type, exception_accessible=exception_accessible)
+
+            if value.type == Type.EXCEPTION:
+                return value
 
             variable.assign(value)
 
@@ -299,16 +369,23 @@ class ClassInstance:
                 if name in variable_bindings.keys():
                     self.interpreter.error(ErrorType.NAME_ERROR)
 
-                value, _ = self.__execute_expression(variable_declaration[2], environment_stack)
+                value = None
 
-                variable_bindings[name] = Variable(type, name, value, self.interpreter)
+                if len(variable_declaration) == 3:
+                    value, _ = self.__execute_expression(variable_declaration[2], environment_stack, exception_accessible=exception_accessible)
+
+                if value is not None:
+                    variable_bindings[name] = Variable(type, name, value, self.interpreter)
+
+                else:
+                    variable_bindings[name] = Variable(type, name, ClassInstance.get_default_return_value(Type.string_to_type(type)), self.interpreter)
 
             environment_stack.append(variable_bindings)
 
             new_method_body = [InterpreterBase.BEGIN_DEF]
             new_method_body.extend(statement_body)
 
-            return_value = self.__execute_statement(new_method_body, environment_stack)
+            return_value = self.__execute_statement(new_method_body, environment_stack, exception_accessible=exception_accessible)
 
             environment_stack.pop()
 
@@ -316,7 +393,7 @@ class ClassInstance:
 
         elif method_body[0] == InterpreterBase.BEGIN_DEF:
             for line in method_body[1:]:
-                return_value = self.__execute_statement(line, environment_stack)
+                return_value = self.__execute_statement(line, environment_stack, exception_accessible=exception_accessible)
                 if return_value is not None:
                     return return_value
 
@@ -325,28 +402,43 @@ class ClassInstance:
             true_statement = method_body[2]
             false_statement = None if len(method_body) == 3 else method_body[3]
 
-            expression_value, _ = self.__execute_expression(expression, environment_stack)
+            expression_value, _ = self.__execute_expression(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if expression_value.type == Type.EXCEPTION:
+                return expression_value
 
             if expression_value.type != Type.BOOLEAN:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
+
             elif expression_value.value == InterpreterBase.TRUE_DEF:
-                return self.__execute_statement(true_statement, environment_stack)
+                return self.__execute_statement(true_statement, environment_stack, exception_accessible=exception_accessible)
             elif false_statement is not None:
-                return self.__execute_statement(false_statement, environment_stack)
+                return self.__execute_statement(false_statement, environment_stack, exception_accessible=exception_accessible)
 
         elif method_body[0] == InterpreterBase.WHILE_DEF:
             expression = method_body[1]
             statement = method_body[2]
             return_value = None
 
-            expression_value, _ = self.__execute_expression(expression, environment_stack)
+            expression_value, _ = self.__execute_expression(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if expression_value.type == Type.EXCEPTION:
+                return expression_value
+
             if expression_value.type != Type.BOOLEAN:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
             while expression_value.value == InterpreterBase.TRUE_DEF:
-                return_value = self.__execute_statement(statement, environment_stack)
+                return_value = self.__execute_statement(statement, environment_stack, exception_accessible=exception_accessible)
+
+                if return_value is not None and return_value.type == Type.EXCEPTION:
+                    return return_value
                 
-                expression_value, _ = self.__execute_expression(expression, environment_stack)
+                expression_value, _ = self.__execute_expression(expression, environment_stack, exception_accessible=exception_accessible)
+
+                if expression_value.type == Type.EXCEPTION:
+                    return expression_value
+
                 if expression_value.type != Type.BOOLEAN:
                     self.interpreter.error(ErrorType.TYPE_ERROR)
 
@@ -357,7 +449,7 @@ class ClassInstance:
             integer_value = self.interpreter.get_input()
             value = Value(integer_value)
 
-            variable = self.__get_variable_from_environment(environment_stack, variable_name)
+            variable = self.__get_variable_from_environment(environment_stack, variable_name, exception_accessible=exception_accessible)
             variable.assign(value)
 
         elif method_body[0] == InterpreterBase.INPUT_STRING_DEF:
@@ -365,7 +457,7 @@ class ClassInstance:
             string_value = self.interpreter.get_input()
             value = Value('"' + string_value + '"')
 
-            variable = self.__get_variable_from_environment(environment_stack, variable_name)
+            variable = self.__get_variable_from_environment(environment_stack, variable_name, exception_accessible=exception_accessible)
             variable.assign(value)
 
         elif method_body[0] == InterpreterBase.RETURN_DEF:
@@ -377,32 +469,85 @@ class ClassInstance:
                 if (expression == "me"):
                     expression_value = Value(self.me[0])
                 else:
-                    expression_value, _ = self.__execute_expression(expression, environment_stack)
+                    expression_value, _ = self.__execute_expression(expression, environment_stack, exception_accessible=exception_accessible)
 
             if expression_value is None:
-                expression_value = ClassInstance.__get_default_return_value(method_type)
+                expression_value = ClassInstance.get_default_return_value(method_type)
 
             if expression_value.type == Type.NULL and expression_value.null_type == None:
                 expression_value.null_type = method_type
 
             return expression_value
 
+        elif method_body[0] == InterpreterBase.TRY_DEF:
+            exception_dictionary = (
+                {InterpreterBase.EXCEPTION_VARIABLE_DEF : Variable(Type.STRING, InterpreterBase.EXCEPTION_VARIABLE_DEF, Value('""'), self.interpreter)}
+            )
+
+            old_exception_dictionary = self.interpreter.latest_exception_dictionary
+
+            environment_stack.append(exception_dictionary)
+
+            self.interpreter.latest_exception_dictionary = exception_dictionary
+
+            return_value = self.__execute_statement(method_body[1], environment_stack, method_type, exception_accessible=exception_accessible)
+
+            if return_value is not None and return_value.type == Type.EXCEPTION:
+                return_value = self.__execute_statement(method_body[2], environment_stack, method_type, exception_accessible=True)
+
+                if return_value is not None and return_value.type == Type.EXCEPTION:
+                    exception, _ = self.__execute_expression(InterpreterBase.EXCEPTION_VARIABLE_DEF, environment_stack, exception_accessible=True)
+                    environment_stack.pop()
+                    set_exception_statement = [InterpreterBase.SET_DEF, InterpreterBase.EXCEPTION_VARIABLE_DEF, exception.value]
+                    self.__execute_statement(set_exception_statement, environment_stack, method_type, exception_accessible=True)
+                else:
+                    environment_stack.pop()
+            else:
+                environment_stack.pop()
+
+
+            self.interpreter.latest_exception_dictionary = old_exception_dictionary
+
+            return return_value
+
+        elif method_body[0] == InterpreterBase.THROW_DEF:
+            
+            if method_body[1] == InterpreterBase.ME_DEF:
+                self.interpreter.error(ErrorType.TYPE_ERROR)
+
+            variable = self.__get_variable_from_environment(environment_stack, InterpreterBase.EXCEPTION_VARIABLE_DEF, exception_accessible=True)
+            evaluated_exception, _ = self.__execute_expression(method_body[1], environment_stack, exception_accessible=exception_accessible)
+
+            if evaluated_exception.type == Type.EXCEPTION:
+                return Value("null", exception=True)
+
+            variable.assign(evaluated_exception)
+
+            return Value("null", exception=True)
+
         else:
-            self.__execute_expression(method_body, environment_stack)
+            return_tuple = self.__execute_expression(method_body, environment_stack, exception_accessible=exception_accessible)
+
+            if return_tuple is not None and return_tuple[0].type == Type.EXCEPTION:
+                return return_tuple[0]
+            
 
     # Call on one expression at a time
-    def __execute_expression(self, expression, environment_stack, variable_type=None):
+    def __execute_expression(self, expression, environment_stack, variable_type=None, exception_accessible=False):
         expression_type = Type.type(expression)
 
         if expression_type is not None:
             return Value(expression), Type.NOT_A_VARIABLE
 
         elif isinstance(expression, str):
-            variable = self.__get_variable_from_environment(environment_stack, expression)
+            variable = self.__get_variable_from_environment(environment_stack, expression, exception_accessible=exception_accessible)
             return variable.value, variable.type
 
         elif expression[0] == '+':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) + int(right_value.value))), Type.NOT_A_VARIABLE
@@ -414,7 +559,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '-':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) - int(right_value.value))), Type.NOT_A_VARIABLE
@@ -423,7 +571,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '*':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) * int(right_value.value))), Type.NOT_A_VARIABLE
@@ -432,7 +583,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '/':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) // int(right_value.value))), Type.NOT_A_VARIABLE
@@ -441,7 +595,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '%':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) % int(right_value.value))), Type.NOT_A_VARIABLE
@@ -450,7 +607,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '==':
-            left_value, right_value, left_variable_type, right_variable_type = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, left_variable_type, right_variable_type = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) == int(right_value.value)).lower()), Type.NOT_A_VARIABLE
@@ -465,7 +625,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '!=':
-            left_value, right_value, left_variable_type, right_variable_type = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, left_variable_type, right_variable_type = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) != int(right_value.value)).lower()), Type.NOT_A_VARIABLE
@@ -480,13 +643,20 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '!':
-            value, _ = self.__execute_expression(expression[1], environment_stack)
+            value, _ = self.__execute_expression(expression[1], environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(value):
+                return value, Type.NOT_A_VARIABLE
+
             if value.type != Type.BOOLEAN:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
             return Value(str(value.value == InterpreterBase.FALSE_DEF).lower()), Type.NOT_A_VARIABLE
 
         elif expression[0] == '>':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) > int(right_value.value)).lower()), Type.NOT_A_VARIABLE
@@ -498,7 +668,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '>=':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) >= int(right_value.value)).lower()), Type.NOT_A_VARIABLE
@@ -510,7 +683,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '<':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) < int(right_value.value)).lower()), Type.NOT_A_VARIABLE
@@ -522,7 +698,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '<=':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_numeric(left_value, right_value):
                 return Value(str(int(left_value.value) <= int(right_value.value)).lower()), Type.NOT_A_VARIABLE
@@ -534,7 +713,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '&':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_bool(left_value, right_value):
                 return Value(str(left_value.value == InterpreterBase.TRUE_DEF and right_value.value == InterpreterBase.TRUE_DEF).lower()), Type.NOT_A_VARIABLE
@@ -543,7 +725,10 @@ class ClassInstance:
                 self.interpreter.error(ErrorType.TYPE_ERROR)
 
         elif expression[0] == '|':
-            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack)
+            left_value, right_value, _, _ = self.__parse_binary_arguments(expression, environment_stack, exception_accessible=exception_accessible)
+
+            if ClassInstance.__check_if_exception(left_value):
+                return left_value, Type.NOT_A_VARIABLE
 
             if ClassInstance.__check_both_bool(left_value, right_value):
                 return Value(str(left_value.value == InterpreterBase.TRUE_DEF or right_value.value == InterpreterBase.TRUE_DEF).lower()), Type.NOT_A_VARIABLE
@@ -554,13 +739,14 @@ class ClassInstance:
         elif expression[0] == InterpreterBase.NEW_DEF:
             class_name = expression[1]
 
-            if class_name not in self.interpreter.classes.keys():
-                self.interpreter.error(ErrorType.TYPE_ERROR)
+            if class_name not in self.interpreter.types:
+                self.interpreter.create_parameterized_class(class_name)
 
             class_type = self.interpreter.classes[class_name]
 
             return Value(ClassInstance(self.interpreter, class_type.name, class_type)), Type.NOT_A_VARIABLE
 
+        # Fix early termination with throwing inside expressions
         elif expression[0] == InterpreterBase.CALL_DEF:
             method_name = expression[2]
 
@@ -583,17 +769,36 @@ class ClassInstance:
 
             arguments_passed = []
             for argument in expression[3:]:
-                arguments_passed.append(self.__execute_expression(argument, environment_stack)[0])
+                evaluated_argument = self.__execute_expression(argument, environment_stack, exception_accessible=exception_accessible)[0]
+
+                if evaluated_argument.type == Type.EXCEPTION:
+                    return evaluated_argument, Type.NOT_A_VARIABLE
+                else:
+                    arguments_passed.append(evaluated_argument)
 
             return_value = self.interpreter.call_function([], obj, method_name, arguments_passed, variable_type)
 
             if return_value is not None:
                 return return_value, Type.NOT_A_VARIABLE
 
-    def __parse_binary_arguments(self, expression, environment_stack):
-        #TODO: Fix this
-        left_value, left_variable_type = self.__execute_expression(expression[1], environment_stack)
-        right_value, right_variable_type = self.__execute_expression(expression[2], environment_stack)
+    def __check_if_exception(left_value):
+        return_value = False
+
+        if left_value.type == Type.EXCEPTION:
+            return_value = True
+
+        return return_value
+
+    def __parse_binary_arguments(self, expression, environment_stack, exception_accessible=False):
+        left_value, left_variable_type = self.__execute_expression(expression[1], environment_stack, exception_accessible=exception_accessible)
+
+        if left_value.type == Type.EXCEPTION:
+            return left_value, left_value, left_variable_type, left_variable_type
+
+        right_value, right_variable_type = self.__execute_expression(expression[2], environment_stack, exception_accessible=exception_accessible)
+
+        if right_value.type == Type.EXCEPTION:
+            return right_value, right_value, right_variable_type, right_variable_type
 
         if left_value.type == Type.NULL and left_value.null_type is not None:
             left_variable_type = left_value.null_type
@@ -616,8 +821,8 @@ class ClassInstance:
         return_value = False
 
         if left_value.type == Type.NULL and right_value.type == Type.NULL:
-            return_value = ((left_variable_type in self.interpreter.classes.keys() and right_variable_type in self.interpreter.classes[left_variable_type].valid_types) or 
-                                    (right_variable_type in self.interpreter.classes.keys() and left_variable_type in self.interpreter.classes[right_variable_type].valid_types))
+            return_value = ((left_variable_type in self.interpreter.types and right_variable_type in self.interpreter.classes[left_variable_type].valid_types) or 
+                                    (right_variable_type in self.interpreter.types and left_variable_type in self.interpreter.classes[right_variable_type].valid_types))
 
         else:
             return_value = (left_value.type == right_value.type or
@@ -626,7 +831,11 @@ class ClassInstance:
 
         return return_value
 
-    def __get_variable_from_environment(self, environment_stack, variable_name : str):
+    def __get_variable_from_environment(self, environment_stack, variable_name : str, exception_accessible=False):
+
+        if variable_name == InterpreterBase.EXCEPTION_VARIABLE_DEF and not exception_accessible:
+            self.interpreter.error(ErrorType.NAME_ERROR)
+
         environment_stack = copy(environment_stack)
 
         variable = None

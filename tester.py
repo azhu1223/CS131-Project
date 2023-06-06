@@ -5,6 +5,7 @@ Implements all CS 131-related test logic; is entry-point for testing framework.
 import asyncio
 import importlib
 from os import environ
+import os
 import sys
 import traceback
 from operator import itemgetter
@@ -189,25 +190,117 @@ def generate_test_suite_v2():
             "test_inher2",
             "test_inher1",
             "test_let",
+            "test_while",
+            "test_set_param",
+            "test_assign_null",
+            "test_begin",
+            "test_bool_expr",
+            "test_compare_bool",
+            "test_compare_int",
+            "test_compare_objref",
+            "test_compare_objref2",
+            "test_compare_string",
+            "test_fields",
+            "test_function_call_same_class",
+            "test_fwd_call",
+            "test_if",
+            "test_inher3_overload",
+            "test_inher4",
+            "test_inher5",
+            "test_inher6",
+            "test_inher7",
+            "test_inher8",
+            "test_inher9",
+            "test_inputi",
+            "test_inputs",
+            "test_instantiate_and_call",
+            "test_instantiate_and_return",
+            "test_int_ops",
+            "test_let_copy",
+            "test_let_shadow",
+            "test_let_shadow2",
+            "test_let_shadow3",
+            "test_let_shadow4",
+            "test_let2",
+            "test_let3_empty",
+            "test_ll",
+            "test_overload1",
+            "test_pass_by_value",
+            "test_pass_by_value2",
+            "test_print_bool",
+            "test_print_int",
+            "test_print_string",
+            "test_return",
+            "test_return_default2",
+            "test_return_exit",
+            "test_return_me",
+            "test_return_null",
+            "test_return_type",
+            "test_return_type2",
+            "test_return_type3",
+            "test_set_field",
+            "test_set_param",
+            "test_str_ops",
+            "test_while",
+            "more_tests/test_1b_return_me",
+            "more_tests/test_cmpwr552",
+            "more_tests/test_super_me"
         ],
-        ["test_incompat_return1", "test_let2", "test_inher1", "test_incompat_types2"],
+        [
+            "test_incompat_return1", 
+            "test_let2", 
+            "test_inher1", 
+            "test_incompat_types2",
+            "test_bad_type_param",
+            "test_call_badargs",
+            "test_call_badargs2",
+            "test_call_invalid_func",
+            "test_dup_class",
+            "test_dup_field",
+            "test_dup_formal_param",
+            "test_dup_method",
+            "test_eval_invalid_var",
+            "test_if",
+            "test_incompat_compare2",
+            "test_incompat_operands1",
+            "test_incompat_operands2",
+            "test_incompat_operands3",
+            "test_incompat_return2",
+            "test_incompat_return3",
+            "test_incompat_return4",
+            "test_incompat_return5",
+            "test_incompat_types1",
+            "test_incompat_types3",
+            "test_inher2",
+            "test_inher3",
+            "test_instantiate_invalid",
+            "test_invalid_return_type",
+            "test_let",
+            "test_let3",
+            "test_missing_main",
+            "test_null_objref",
+            "test_poly1",
+            "test_return_assign_type",
+            "test_set_invalid_var",
+            "test_while",
+            "more_fails/test_base_super",
+            "more_fails/test_cmpwr445",
+            "more_fails/test_cmpwr450"
+        ],
     )
 
+def get_files(path):
+    for file in os.listdir(path):
+        if os.path.isfile(os.path.join(path, file)):
+            yield file
 
 def generate_test_suite_v3():
     """wrapper for generate_test_suite for v3"""
-    tests = [
-        "test_str_ops",
-        "test_template1",
-        "test_template8",
-        "test_except1",
-        "test_except13"
-    ]
-    fails = [
-        "test_except4",
-        "test_template5",
-        "test_incompat_template_types"
-    ]
+    test_files = get_files("C:\\Users\\andre\\Desktop\\CS 131 Quarter Project\\v3\\tests")
+    #tests = map(lambda a : a.replace(".brewin", ""), filter(lambda a : ".brewin" in a, test_files))
+    tests = []
+    fail_files = get_files("C:\\Users\\andre\\Desktop\\CS 131 Quarter Project\\v3\\fails")
+    fails = map(lambda a : a.replace(".brewin", ""), filter(lambda a : ".brewin" in a, fail_files))
     return __generate_test_suite(3, tests, fails)
 
 
